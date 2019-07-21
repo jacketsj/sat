@@ -34,31 +34,45 @@ module Solution = struct
 end
 
 module Dpll = struct
-  type assignment = int list
+  type assignment = int list [@@deriving sexp]
 
-  let assignment_complete assignment = List.fold assignment ~init:true ~f:(fun acc elem -> acc && elem = 1)
+  type unit_list = int list [@@deriving sexp]
+
+  let assignment_complete assignment = List.fold assignment ~init:true ~f:(fun acc elem -> acc && not (elem = 0))
 
   let empty_clause expr = List.fold expr ~init:false ~f:(fun acc clause -> acc || List.is_empty clause)
 
   let first_if_only_one l = match l with [] | _ :: _ :: _ -> None | [first] -> Some first
 
-  let get_units expr =
-    List.fold expr ~init:[] ~f:(fun acc clause ->
-        match first_if_only_one clause with None -> acc | Some x -> x :: acc)
+  let rec set_nth assignment x acc =
+    let pos = abs x in
+    let sign = x / pos in
+    match assignment with [] -> [] | hd :: tl -> if pos - 1 = acc then sign :: tl else hd :: set_nth tl x (acc + 1)
 
-  let do_unit_propogations expr =
-    let units = get_units expr in
+  let get_units expr assignment =
+    List.fold expr ~init:(assignment, []) ~f:(fun (assignment, acc) clause ->
+        match first_if_only_one clause with None -> (assignment, acc) | Some x -> (set_nth assignment x 0, x :: acc))
+
+  let remove_units expr units =
     List.map expr ~f:(fun clause ->
         List.filter clause ~f:(fun literal ->
-            List.fold units ~init:true ~f:(fun acc unit_var -> acc || literal = -unit_var)))
+            List.fold units ~init:true ~f:(fun acc unit_var -> acc && not (literal = -unit_var))))
 
-  let rec assign_next_var assignment sign =
+  let do_unit_propogations expr assignment =
+    let assignment, units = get_units expr assignment in
+    (assignment, remove_units expr units)
+
+  let rec assign_next_var expr assignment sign acc =
     match assignment with
     | [] ->
-        print_s [%message "over-assigned to vars"] ;
-        assignment
-    | 0 :: tl -> sign :: tl
-    | hd :: tl -> hd :: assign_next_var tl sign
+        Core.print_s [%message "over-assigned to vars"] ;
+        (expr, assignment)
+    | 0 :: tl ->
+        let expr = remove_units expr [acc] in
+        (expr, sign :: tl)
+    | hd :: tl ->
+        let expr, tl = assign_next_var expr tl sign (acc + 1) in
+        (expr, hd :: tl)
 
   let empty_assignment expr =
     let rec var_count expr acc =
@@ -72,17 +86,14 @@ module Dpll = struct
 
   let run expr =
     let rec run (expr : Cnf.expression) (assignment : assignment) =
-      let _ = failwith (Sexp.to_string_hum (List.sexp_of_t (List.sexp_of_t Int.sexp_of_t) expr)) in
-      let expr = do_unit_propogations expr in
+      let assignment, expr = do_unit_propogations expr assignment in
       (* let assignment = do_pure_literal_assignments expr assignment in *)
       if empty_clause expr then Solution.Unsat
-      else if assignment_complete assignment then
-        let _ = failwith (Sexp.to_string_hum (Solution.sexp_of_t (Solution.Sat assignment))) in
-        Solution.Sat assignment
+      else if assignment_complete assignment then Solution.Sat assignment
       else
-        let assignment_t = assign_next_var assignment 1 in
-        let assignment_f = assign_next_var assignment 0 in
-        match run expr assignment_t with Unsat -> run expr assignment_f | x -> x
+        let expr_t, assignment_t = assign_next_var expr assignment 1 0 in
+        let expr_f, assignment_f = assign_next_var expr assignment 0 0 in
+        match run expr_t assignment_t with Unsat -> run expr_f assignment_f | x -> x
     in
     run expr (empty_assignment expr)
 
@@ -102,9 +113,7 @@ module Dpll = struct
     Command.basic ~summary:"Run the DPLL algorithm on a given input string"
       (let open Command.Let_syntax in
       let%map_open input_file = anon ("INPUT FILE" %: string) in
-      fun () ->
-        print_string "opening file\n" ;
-        print_s [%sexp (run (Cnf.parse_input_file input_file) : Solution.t)])
+      fun () -> Core.print_s [%sexp (run (Cnf.parse_input_file input_file) : Solution.t)])
 end
 
 let command = Command.group ~summary:"A small OCaml SAT solver" [("dpll", Dpll.command)]
