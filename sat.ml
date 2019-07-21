@@ -54,9 +54,14 @@ module Dpll = struct
         match first_if_only_one clause with None -> (assignment, acc) | Some x -> (set_nth assignment x 0, x :: acc))
 
   let remove_units expr units =
-    List.map expr ~f:(fun clause ->
-        List.filter clause ~f:(fun literal ->
-            List.fold units ~init:true ~f:(fun acc unit_var -> acc && not (literal = -unit_var))))
+    let expr =
+      List.map expr ~f:(fun clause ->
+          List.filter clause ~f:(fun literal ->
+              List.fold units ~init:true ~f:(fun acc unit_var -> acc && not (literal = -unit_var))))
+    in
+    List.filter expr ~f:(fun clause ->
+        List.fold clause ~init:true ~f:(fun acc literal ->
+            List.fold units ~init:acc ~f:(fun acc unit_var -> acc && not (literal = unit_var))))
 
   let do_unit_propogations expr assignment =
     let assignment, units = get_units expr assignment in
@@ -68,7 +73,7 @@ module Dpll = struct
         Core.print_s [%message "over-assigned to vars"] ;
         (expr, assignment)
     | 0 :: tl ->
-        let expr = remove_units expr [acc] in
+        let expr = remove_units ([(acc + 1) * sign] :: expr) [acc] in
         (expr, sign :: tl)
     | hd :: tl ->
         let expr, tl = assign_next_var expr tl sign (acc + 1) in
@@ -87,12 +92,13 @@ module Dpll = struct
   let run expr =
     let rec run (expr : Cnf.expression) (assignment : assignment) =
       let assignment, expr = do_unit_propogations expr assignment in
+      Core.print_s [%message "" (expr : Cnf.expression) (assignment : assignment)] ;
       (* let assignment = do_pure_literal_assignments expr assignment in *)
       if empty_clause expr then Solution.Unsat
       else if assignment_complete assignment then Solution.Sat assignment
       else
         let expr_t, assignment_t = assign_next_var expr assignment 1 0 in
-        let expr_f, assignment_f = assign_next_var expr assignment 0 0 in
+        let expr_f, assignment_f = assign_next_var expr assignment (-1) 0 in
         match run expr_t assignment_t with Unsat -> run expr_f assignment_f | x -> x
     in
     run expr (empty_assignment expr)
