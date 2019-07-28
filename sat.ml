@@ -24,14 +24,25 @@ module Cnf = struct
 
   let parse_expr str_list = List.map str_list ~f:parse_clause
 
+  let rec skip_comments lines =
+    let starts_with str = if String.length str = 0 then false else String.nget str 0 = 'c' in
+    match lines with hd :: tl -> if starts_with hd then skip_comments tl else tl (* skip cnf line *) | [] -> []
+
   let parse_input_file input_file =
     let lines = In_channel.read_lines input_file in
+    let lines = skip_comments lines in
     parse_expr lines
 end
 
 module Solution = struct
   type t = Sat of int list | Unsat [@@deriving sexp]
 end
+
+let build_command ~summary ~run =
+  Command.basic ~summary
+    (let open Command.Let_syntax in
+    let%map_open input_file = anon ("INPUT FILE" %: string) in
+    fun () -> Core.print_s [%sexp (run (Cnf.parse_input_file input_file) : Solution.t)])
 
 module Dpll = struct
   type assignment = int list [@@deriving sexp]
@@ -103,24 +114,20 @@ module Dpll = struct
     in
     run expr (empty_assignment expr)
 
-  (* let run expr =
-                if complete expr then
-                        true
-                else if empty_clause expr then
-                        false
-                else
-                        let expr = do_unit_propogations expr in
-                        let expr = do_pure_literal_assigns expr in
-                        let l = choose_literal expr in
-                        (run ([P of l] :: expr)) or
-                                (run ([N of l] :: expr)) *)
-
-  let command =
-    Command.basic ~summary:"Run the DPLL algorithm on a given input string"
-      (let open Command.Let_syntax in
-      let%map_open input_file = anon ("INPUT FILE" %: string) in
-      fun () -> Core.print_s [%sexp (run (Cnf.parse_input_file input_file) : Solution.t)])
+  let command = build_command ~summary:"Run the DPLL algorithm on a given input string" ~run
 end
+
+(* let run expr =
+            if complete expr then
+                    true
+            else if empty_clause expr then
+                    false
+            else
+                    let expr = do_unit_propogations expr in
+                    let expr = do_pure_literal_assigns expr in
+                    let l = choose_literal expr in
+                    (run ([P of l] :: expr)) or
+                            (run ([N of l] :: expr)) *)
 
 let command = Command.group ~summary:"A small OCaml SAT solver" [("dpll", Dpll.command)]
 
